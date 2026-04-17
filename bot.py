@@ -156,11 +156,11 @@ async def check_for_updates():
                 
             if old_date != new_date:
                 updated_in_config = True
-                logging.info(f"✅ Date updated after deep check for {single_info['title']}: {new_date}")
+                save_tracked_games(tracked_games)
+                logging.info(f"✅ Date updated after deep check for {single_info['title']}: {new_date}. Progress saved.")
 
     if updated_in_config:
-        save_tracked_games(tracked_games)
-        logging.info("Tracking file updated with new dates.")
+        logging.info("Deep check loop complete. Tracking file is up-to-date.")
     else:
         logging.info("No updates found.")
         
