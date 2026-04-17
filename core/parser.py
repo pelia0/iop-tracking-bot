@@ -101,13 +101,29 @@ class GameParser:
                 try:
                     driver = self.get_driver()
                     
-                    if page > 1:
+                    if page == 1:
+                        logging.info(f"Loading {page_url} (initial page, attempt {attempt}/{MAX_RETRIES})...")
+                        driver.get(page_url)
+                    else:
                         delay = random.uniform(3.0, 6.0)
-                        logging.info(f"Waiting {delay:.1f} sec before loading page {page} (anti-spam, attempt {attempt})...")
+                        logging.info(f"Waiting {delay:.1f} sec before clicking next page {page} (anti-spam, attempt {attempt})...")
                         time.sleep(delay)
-                    
-                    logging.info(f"Loading {page_url} (attempt {attempt}/{MAX_RETRIES})...")
-                    driver.get(page_url)
+                        
+                        try:
+                            # Search for the "Next" button selector observed in the HTML
+                            next_btn_selector = ".pages-next a"
+                            wait = WebDriverWait(driver, 10)
+                            next_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, next_btn_selector)))
+                            
+                            # Scroll to button to make it more 'human'
+                            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_btn)
+                            time.sleep(1)
+                            
+                            logging.info(f"Clicking 'Next' button to navigate to page {page}...")
+                            next_btn.click()
+                        except Exception as click_err:
+                            logging.warning(f"Failed to click next button: {click_err}. Falling back to direct URL navigation.")
+                            driver.get(page_url)
                     
                     logging.info(f"Selenium waiting for content load (page {page})...")
                     wait = WebDriverWait(driver, 30)
