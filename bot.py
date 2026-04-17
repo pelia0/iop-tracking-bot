@@ -55,8 +55,7 @@ async def check_for_updates():
         if should_alert:
             channel = bot.get_channel(CHANNEL_ID)
             if channel:
-                await channel.send("⚠️ **CRITICAL ERROR**: PARSER IS DOWN! ⚠️
-3 consecutive attempts failed. Manual check required.")
+                await channel.send("⚠️ **CRITICAL ERROR**: PARSER IS DOWN! ⚠️\n3 consecutive attempts failed. Manual check required.")
         await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="PARSER ERROR"))
         return
 
@@ -75,7 +74,7 @@ async def check_for_updates():
             current_date = current_info['date']
 
             if current_date != last_known_date and last_known_date != "N/A":
-                logging.info(f"UPDATE! Game '{current_info['title']}' changed date from '{last_known_date}' на '{current_date}'")
+                logging.info(f"UPDATE! Game '{current_info['title']}' changed date from '{last_known_date}' to '{current_date}'")
 
                 # Create buttons
                 view = discord.ui.View()
@@ -206,14 +205,14 @@ async def track_game(interaction: discord.Interaction, url: str):
     if game_info:
         tracked_games[normalized_url] = {"title": game_info['title'], "date": game_info['date'], "image_url": game_info['image_url']}
         save_tracked_games(tracked_games)
-        await interaction.channel.send(f"✅ Game `{game_info[\'title\']}` added to tracking list with date `{game_info[\'date\']}`.")
+        await interaction.channel.send(f"✅ Game `{game_info['title']}` added to tracking list with date `{game_info['date']}`.")
     else:
         # If not found on main page, try loading the generic page
         single_game_info = await asyncio.to_thread(parser_instance.parse_single_game_page, normalized_url)
         if single_game_info:
             tracked_games[normalized_url] = single_game_info
             save_tracked_games(tracked_games)
-            await interaction.channel.send(f"✅ Game `{single_game_info[\'title\']}` added. Exact date will be updated later.")
+            await interaction.channel.send(f"✅ Game `{single_game_info['title']}` added. Exact date will be updated later.")
         else:
             tracked_games[normalized_url] = {"title": "Unknown", "date": "N/A", "image_url": "N/A"}
             save_tracked_games(tracked_games)
