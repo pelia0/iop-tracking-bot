@@ -5,4 +5,8 @@ __pycache__/
 venv/
 env/
 bot_log.txt
+bot.log
+bot.log.*
 settings.json
+tracked_games.json
+tracked_games.json.bak
