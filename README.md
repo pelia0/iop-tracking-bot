@@ -2,9 +2,21 @@
 
 A Discord tracking bot designed to monitor Visual Novel releases and updates on the Island of Pleasure (IOP) website. It scrapes game updates silently in the background and sends Discord alerts when tracked games get updated.
 
+## Architecture
+
+The bot follows a modular architecture:
+
+- **`bot.py`**: Main Discord bot with slash commands and task scheduling
+- **`core/updater.py`**: Game update checking logic and notification handling
+- **`core/parser.py`**: Selenium-based web scraping with Cloudflare bypass
+- **`core/storage.py`**: JSON persistence with atomic writes and backups
+- **`core/models.py`**: Data models for tracked games
+- **`core/utils.py`**: Utility functions for URL normalization
+- **`core/health.py`**: Health monitoring and failure tracking
+
 ## Features
 
-- **Automated Tracking**: Background polling every 15 minutes to check for updates on tracked games.
+- **Automated Tracking**: Background polling every hour to check for updates on tracked games.
 - **Deep Date Backfilling**: Automatically fixes games with missing dates (N/A) by running deep singular checks spaced out safely.
 - **Cloudflare Bypass**: Implements randomized delays and specialized scraping logic to prevent Cloudflare restrictions.
 - **Slash Commands**: Manage your tracked list natively in Discord (`/track`, `/untrack`, `/list`, `/status`, `/checknow`).

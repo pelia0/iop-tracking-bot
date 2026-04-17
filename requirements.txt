@@ -1,6 +1,6 @@
-beautifulsoup4
-discord.py
-python-dotenv
-requests
-selenium
-webdriver-manager
+beautifulsoup4==4.12.3
+discord.py==2.3.2
+python-dotenv==1.0.0
+requests==2.31.0
+selenium==4.15.2
+webdriver-manager==4.0.1
