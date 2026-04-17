@@ -228,11 +228,47 @@ class GameParser:
                     game_title = game_title.split("»")[0].strip()
                     
                 html = driver.page_source
-                match = re.search(r'Обновлен[оа]?\s*:?\s*([0-9]{2}\.[0-9]{2}\.[0-9]{4})', html, re.IGNORECASE)
-                game_date = match.group(1) if match else "N/A"
+                soup = BeautifulSoup(html, 'html.parser')
+                main_content = soup.find(id='dle-content')
+                main_text = main_content.text if main_content else html
+                
+                game_date = "N/A"
+                
+                # 1. Try "Дата - DD-MM-YYYY"
+                match = re.search(r'Дата\s*[:-]\s*([0-9]{1,2})[.-]([0-9]{1,2})[.-]([0-9]{4})', main_text, re.IGNORECASE)
+                if match:
+                    d, m, y = match.group(1), match.group(2), match.group(3)
+                    game_date = f"{d.zfill(2)}.{m.zfill(2)}.{y}"
+                
+                # 2. Try "Тему отредактировал: ... - DD-MM-YYYY"
+                if game_date == "N/A":
+                    match_edit = re.search(r'Тему отредактировал:.*?\s*-\s*([0-9]{1,2})[.-]([0-9]{1,2})[.-]([0-9]{4})', main_text, re.IGNORECASE)
+                    if match_edit:
+                        d, m, y = match_edit.group(1), match_edit.group(2), match_edit.group(3)
+                        game_date = f"{d.zfill(2)}.{m.zfill(2)}.{y}"
+                
+                # 3. Try "Загрузил: ... (DD MONTH YYYY)"
+                if game_date == "N/A":
+                    months_map = {
+                        'января': '01', 'февраля': '02', 'марта': '03', 'апреля': '04',
+                        'мая': '05', 'июня': '06', 'июля': '07', 'августа': '08',
+                        'сентября': '09', 'октября': '10', 'ноября': '11', 'декабря': '12'
+                    }
+                    match_upload = re.search(r'Загрузил:.*?\(\s*([0-9]{1,2})\s*([а-я]+)\s*([0-9]{4})', main_text, re.IGNORECASE)
+                    if match_upload:
+                        d, m_name, y = match_upload.group(1), match_upload.group(2).lower(), match_upload.group(3)
+                        if m_name in months_map:
+                            game_date = f"{d.zfill(2)}.{months_map[m_name]}.{y}"
+
+                # 4. Fallback to general "Обновлено" search
+                if game_date == "N/A":
+                    match_fallback = re.search(r'Обновлен[оа]?\s*[:-]\s*([0-9]{1,2})[.-]([0-9]{1,2})[.-]([0-9]{4})', main_text, re.IGNORECASE)
+                    if match_fallback:
+                        d, m, y = match_fallback.group(1), match_fallback.group(2), match_fallback.group(3)
+                        game_date = f"{d.zfill(2)}.{m.zfill(2)}.{y}"
                 
                 logging.info(f"parse_single_game_page {url} -> title: {game_title}, date: {game_date}")
-                return {"title": game_title, "date": game_date, "image_url": "N/A"} # image_url just in case
+                return {"title": game_title, "date": game_date, "image_url": "N/A"}
             except TimeoutException:
                 logging.warning(f"Cloudflare block or Timeout on single page {url} (attempt {attempt}/{MAX_RETRIES}): Element 'dle-content' not found (probably CAPTCHA).")
                 self._reset_driver()
