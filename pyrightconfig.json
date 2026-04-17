@@ -1,0 +1,19 @@
+{
+    "include": [
+        "."
+    ],
+    "exclude": [
+        "__pycache__",
+        ".git",
+        "node_modules"
+    ],
+    "pythonVersion": "3.13",
+    "typeCheckingMode": "basic",
+    "useLibraryCodeForTypes": true,
+    "reportMissingImports": "error",
+    "reportMissingTypeStubs": "warning",
+    "stubPath": "./stubs",
+    "extraPaths": [
+        "C:\\Users\\pelia\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages"
+    ]
+}
