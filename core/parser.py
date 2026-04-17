@@ -27,25 +27,25 @@ class GameParser:
     def initialize(self):
         """Init chromedriver path once"""
         if not self.chromedriver_path:
-            logging.info("Инициализация WebDriver... Проверка версии chromedriver.")
+            logging.info("Initializing WebDriver... Checking chromedriver version.")
             system_chromedriver = "/usr/bin/chromedriver"
             if os.path.exists(system_chromedriver):
                 self.chromedriver_path = system_chromedriver
-                logging.info(f"Используем системный chromedriver: {self.chromedriver_path}")
+                logging.info(f"Using system chromedriver: {self.chromedriver_path}")
             else:
                 try:
                     self.chromedriver_path = ChromeDriverManager().install()
-                    logging.info(f"Chromedriver готов. Путь: {self.chromedriver_path}")
+                    logging.info(f"Chromedriver ready. Path: {self.chromedriver_path}")
                 except Exception as e:
-                    logging.critical(f"Ошибка инициализации chromedriver: {e}")
+                    logging.critical(f"Error initializing chromedriver: {e}")
                     self.chromedriver_path = None
 
     def _create_fresh_driver(self):
-        """Создаёт новый экземпляр Chrome WebDriver."""
+        """Creates a new Chrome WebDriver instance."""
         if not self.chromedriver_path:
             self.initialize()
             if not self.chromedriver_path:
-                raise Exception("Путь к chromedriver не инициализирован.")
+                raise Exception("Path to chromedriver is not initialized.")
 
         chrome_options = Options()
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
@@ -72,19 +72,19 @@ class GameParser:
                 _ = self.driver.title
                 return self.driver
             except Exception:
-                logging.warning("Существующий WebDriver не отвечает, пересоздаю...")
+                logging.warning("Existing WebDriver is unresponsive, recreating...")
                 self.quit()
 
         self.driver = self._create_fresh_driver()
         return self.driver
 
     def _reset_driver(self):
-        """Принудительно уничтожает текущий драйвер для пересоздания при следующем вызове."""
-        logging.warning("Сброс WebDriver после ошибки...")
+        """Force kills current driver to recreate on next call."""
+        logging.warning("Resetting WebDriver after error...")
         self.quit()
 
     def parse_games_on_page(self, base_url='https://island-of-pleasure.site/games/', pages_to_check=3):
-        """Синхронная блокирующая функция парсинга нескольких страниц с играми (с retry)."""
+        """Synchronous blocking function for parsing multiple game pages (with retry)."""
         all_games = {}
         import time
         import random
@@ -97,12 +97,12 @@ class GameParser:
                     
                     if page > 1:
                         delay = random.uniform(3.0, 6.0)
-                        logging.info(f"Ожидание {delay:.1f} сек перед загрузкой страницы {page} (анти-спам)...")
+                        logging.info(f"Waiting {delay:.1f} sec before loading page {page} (anti-spam)...")
                         time.sleep(delay)
                         
                     driver.get(page_url)
                     
-                    logging.info(f"Selenium ожидает загрузки контента (страница {page})...")
+                    logging.info(f"Selenium waiting for content load (page {page})...")
                     wait = WebDriverWait(driver, 30)
                     wait.until(EC.presence_of_element_located((By.ID, "dle-content")))
                     
@@ -111,7 +111,7 @@ class GameParser:
                     
                     content_div = soup.find('div', id='dle-content')
                     if not content_div:
-                        logging.warning(f"Основной блок 'dle-content' не найден на странице {page}.")
+                        logging.warning(f"Main block \'dle-content\' not found on page {page}.")
                         continue
 
                     game_blocks = content_div.find_all('div', class_=lambda c: c and 'shortstory-in' in c and 'story_news' in c)
@@ -139,15 +139,15 @@ class GameParser:
                         }
                 return all_games
             except Exception as e:
-                logging.error(f"Ошибка при парсинге страницы (попытка {attempt}/{MAX_RETRIES}): {e}")
+                logging.error(f"Error parsing page (attempt {attempt}/{MAX_RETRIES}): {e}")
                 self._reset_driver()
                 if attempt == MAX_RETRIES:
-                    logging.error("Все попытки парсинга исчерпаны.")
+                    logging.error("All parsing attempts exhausted.")
                     return {}
-                logging.info("Повторная попытка с новым WebDriver...")
+                logging.info("Retrying with new WebDriver...")
 
     def parse_single_game_page(self, url: str):
-        """Синхронная функция парсинга отдельной страницы игры (с retry)."""
+        """Synchronous function for parsing a single game page (with retry)."""
         import re
         for attempt in range(1, MAX_RETRIES + 1):
             try:
@@ -157,7 +157,7 @@ class GameParser:
                 wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
                 
                 game_title = driver.title
-                if "» 18+ Остров Наслаждений!" in game_title:
+                if "» 18+ Island of Pleasure!" in game_title:
                     game_title = game_title.split("»")[0].strip()
                     
                 html = driver.page_source
@@ -167,11 +167,11 @@ class GameParser:
                 logging.info(f"parse_single_game_page {url} -> title: {game_title}, date: {game_date}")
                 return {"title": game_title, "date": game_date, "image_url": "N/A"} # image_url just in case
             except Exception as e:
-                logging.error(f"Ошибка при парсинге отдельной страницы {url} (попытка {attempt}/{MAX_RETRIES}): {e}")
+                logging.error(f"Error parsing single page {url} (попытка {attempt}/{MAX_RETRIES}): {e}")
                 self._reset_driver()
                 if attempt == MAX_RETRIES:
                     return None
-                logging.info("Повторная попытка с новым WebDriver...")
+                logging.info("Retrying with new WebDriver...")
 
     def quit(self):
         if self.driver:

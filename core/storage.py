@@ -18,7 +18,7 @@ def save_tracked_games(data):
         try:
             shutil.copy2(TRACKED_GAMES_FILE, TRACKED_GAMES_FILE + '.bak')
         except Exception as e:
-            logging.error(f"Не удалось создать бекап: {e}")
+            logging.error(f"Failed to create backup: {e}")
             
     tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(TRACKED_GAMES_FILE)) or '.', suffix='.json')
     try:
@@ -27,5 +27,5 @@ def save_tracked_games(data):
         os.replace(tmp_path, TRACKED_GAMES_FILE)
     except Exception as e:
         os.unlink(tmp_path)
-        logging.error(f"Ошибка при сохранении json: {e}")
+        logging.error(f"Error saving json: {e}")
         raise

@@ -14,7 +14,7 @@ class HealthMonitor:
         self.total_checks += 1
     
     def record_failure(self) -> bool:
-        """Повертає True якщо треба відправити алерт (3 помилки підряд)."""
+        """Returns True if it needs to send an alert (3 consecutive errors)."""
         self.consecutive_failures += 1
         return self.consecutive_failures >= 3
 
