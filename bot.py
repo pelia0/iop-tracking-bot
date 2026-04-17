@@ -47,8 +47,8 @@ async def check_for_updates():
     elapsed_minutes = (now - last_check_dt).total_seconds() / 60
     
     # Check if we should skip (anti-spam)
-    if elapsed_minutes < 15:
-        wait_min = int(15 - elapsed_minutes)
+    if elapsed_minutes < 60:
+        wait_min = int(60 - elapsed_minutes)
         logging.info(f"Skipping check. Last check was {int(elapsed_minutes)}m ago. Next check in ~{wait_min}m.")
         return
 
