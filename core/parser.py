@@ -91,6 +91,58 @@ class GameParser:
         logging.warning("Resetting WebDriver after error...")
         self.quit()
 
+    def _dismiss_popups(self, driver):
+        """Try to dismiss common popup elements that might block clicks."""
+        try:
+            # Common popup selectors to try
+            popup_selectors = [
+                # Close buttons
+                "button[class*='close']",
+                "button[class*='dismiss']",
+                ".popup-close",
+                ".modal-close",
+                ".close-button",
+                "[data-dismiss='modal']",
+                # Generic close icons
+                ".fa-times",
+                ".fa-close",
+                # Overlay dismiss
+                ".overlay",
+                ".popup-overlay",
+                ".modal-backdrop",
+                # Specific popup types
+                ".cookie-banner .close",
+                ".newsletter-popup .close",
+                ".subscription-popup .close"
+            ]
+            
+            for selector in popup_selectors:
+                try:
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    for element in elements:
+                        if element.is_displayed():
+                            driver.execute_script("arguments[0].click();", element)
+                            logging.info(f"Dismissed popup with selector: {selector}")
+                            time.sleep(0.5)
+                            break
+                except:
+                    continue
+                    
+            # Try to click anywhere on overlay to dismiss
+            try:
+                overlays = driver.find_elements(By.CSS_SELECTOR, ".popup-overlay, .modal-backdrop, .overlay")
+                for overlay in overlays:
+                    if overlay.is_displayed():
+                        driver.execute_script("arguments[0].click();", overlay)
+                        logging.info("Clicked overlay to dismiss popup")
+                        time.sleep(0.5)
+                        break
+            except:
+                pass
+                
+        except Exception as e:
+            logging.debug(f"Popup dismissal attempt failed: {e}")
+
     def parse_games_on_page(self, pages_to_check=20, stop_date=None):
         """Synchronous blocking function for parsing several game pages.
         Retries are now handled per-page to avoid restarting from page 1 on failure.
@@ -125,6 +177,9 @@ class GameParser:
                         time.sleep(delay)
                         
                         try:
+                            # Dismiss any popups that might block the click
+                            self._dismiss_popups(driver)
+                            
                             # Search for the "Next" button selector observed in the HTML
                             next_btn_selector = ".pages-next a"
                             wait = WebDriverWait(driver, 10)
@@ -135,7 +190,16 @@ class GameParser:
                             time.sleep(1)
                             
                             logging.info(f"Clicking 'Next' button to navigate to page {page}...")
-                            next_btn.click()
+                            try:
+                                next_btn.click()
+                            except Exception as click_error:
+                                logging.warning(f"Regular click failed: {click_error}. Trying JavaScript click...")
+                                try:
+                                    driver.execute_script("arguments[0].click();", next_btn)
+                                    logging.info("JavaScript click succeeded")
+                                except Exception as js_error:
+                                    logging.warning(f"JavaScript click also failed: {js_error}")
+                                    raise click_error  # Re-raise to trigger fallback
                         except Exception as click_err:
                             logging.warning(f"Failed to click next button: {click_err}. Falling back to direct URL navigation.")
                             driver.get(page_url)
