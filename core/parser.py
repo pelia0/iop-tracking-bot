@@ -153,8 +153,8 @@ class GameParser:
             try:
                 driver = self.get_driver()
                 driver.get(url)
-                wait = WebDriverWait(driver, 30)
-                wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                wait = WebDriverWait(driver, 45)  # Extended wait for Cloudflare challenge
+                wait.until(EC.presence_of_element_located((By.ID, "dle-content")))
                 
                 game_title = driver.title
                 if "» 18+ Island of Pleasure!" in game_title:

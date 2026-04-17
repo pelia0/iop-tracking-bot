@@ -133,10 +133,11 @@ async def check_for_updates():
                 if len(games_to_deep_check) >= 2: # Maximum 2 games per 1 cycle (15 min)
                     break
                     
+    import random
     for i, check_url in enumerate(games_to_deep_check):
-        if i > 0:
-            logging.info("⏳ 5 minute delay before next deep check (anti-Cloudflare)...")
-            await asyncio.sleep(300)
+        delay_seconds = 300 if i > 0 else random.randint(30, 60)
+        logging.info(f"⏳ {delay_seconds} second delay before deep check (simulating human)...")
+        await asyncio.sleep(delay_seconds)
             
         logging.info(f"🔍 Deep checking page: {check_url}")
         
