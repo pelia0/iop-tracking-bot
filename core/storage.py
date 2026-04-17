@@ -29,3 +29,19 @@ def save_tracked_games(data):
         os.unlink(tmp_path)
         logging.error(f"Error saving json: {e}")
         raise
+
+SETTINGS_FILE = "settings.json"
+
+def load_settings():
+    try:
+        with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"last_full_check": "1970-01-01T00:00:00"}
+
+def save_settings(data):
+    try:
+        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        logging.error(f"Error saving settings: {e}")

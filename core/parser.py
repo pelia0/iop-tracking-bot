@@ -84,11 +84,15 @@ class GameParser:
         logging.warning("Resetting WebDriver after error...")
         self.quit()
 
-    def parse_games_on_page(self, base_url='https://island-of-pleasure.site/games/', pages_to_check=3):
-        """Synchronous blocking function for parsing multiple game pages (with retry)."""
+    def parse_games_on_page(self, base_url='https://island-of-pleasure.site/games/', pages_to_check=20, stop_date=None):
+        """Synchronous blocking function for parsing several game pages (with retry).
+        If stop_date (datetime) is provided, it stops parsing once it encounters an older game.
+        """
         all_games = {}
         import time
         import random
+        from datetime import datetime
+        
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 driver = self.get_driver()
@@ -112,7 +116,7 @@ class GameParser:
                     
                     content_div = soup.find('div', id='dle-content')
                     if not content_div:
-                        logging.warning(f"Main block \'dle-content\' not found on page {page}.")
+                        logging.warning(f"Main block 'dle-content' not found on page {page}.")
                         continue
 
                     game_blocks = content_div.find_all('div', class_=lambda c: c and 'shortstory-in' in c and 'story_news' in c)
@@ -125,8 +129,18 @@ class GameParser:
                         game_title = title_element.get('title', title_element.text.strip())
                         
                         date_element = block.find('div', class_='update_date')
-                        game_date = date_element.text.strip() if date_element else "N/A"
+                        game_date_str = date_element.text.strip() if date_element else "N/A"
                         
+                        # Early exit logic: if game date < stop_date, we found historical entries
+                        if stop_date and game_date_str != "N/A":
+                            try:
+                                game_dt = datetime.strptime(game_date_str, "%d.%m.%Y")
+                                if game_dt < stop_date:
+                                    logging.info(f"Stopping scan: encountered date {game_date_str} < stop_date {stop_date.strftime('%d.%m.%Y')}")
+                                    return all_games
+                            except ValueError:
+                                pass
+
                         image_element = block.find('img')
                         game_image_url = "N/A"
                         if image_element:
@@ -135,23 +149,15 @@ class GameParser:
 
                         all_games[game_url] = {
                             "title": game_title,
-                            "date": game_date,
+                            "date": game_date_str,
                             "image_url": game_image_url
                         }
                 return all_games
-            except TimeoutException:
-                logging.warning(f"Cloudflare block or Timeout on page {page} (attempt {attempt}/{MAX_RETRIES}): Could not load 'dle-content'.")
-                self._reset_driver()
-                if attempt == MAX_RETRIES:
-                    logging.error("All parsing attempts exhausted due to Timeout/Cloudflare.")
-                    return {}
-                logging.info("Retrying with new WebDriver...")
             except Exception as e:
-                logging.error(f"Error parsing page (attempt {attempt}/{MAX_RETRIES}): {e}")
+                logging.error(f"Error parsing page {page if 'page' in locals() else 1} (attempt {attempt}/{MAX_RETRIES}): {e}")
                 self._reset_driver()
                 if attempt == MAX_RETRIES:
-                    logging.error("All parsing attempts exhausted.")
-                    return {}
+                    raise e
                 logging.info("Retrying with new WebDriver...")
 
     def parse_single_game_page(self, url: str):

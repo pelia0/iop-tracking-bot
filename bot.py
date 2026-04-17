@@ -7,9 +7,10 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
-from core.storage import load_tracked_games, save_tracked_games
+from core.storage import load_tracked_games, save_tracked_games, load_settings, save_settings
 from core.parser import parser_instance
 from core.health import health
+from selenium.common.exceptions import TimeoutException
 
 # --- 1. SETTINGS ---
 import logging.handlers
@@ -38,26 +39,56 @@ last_deep_check_time = {}
 
 @tasks.loop(minutes=15)
 async def check_for_updates():
-    logging.info("Checking for tracked game updates...")
+    settings = load_settings()
+    last_check_str = settings.get("last_full_check", "1970-01-01T00:00:00")
+    last_check_dt = datetime.fromisoformat(last_check_str)
+    now = datetime.now()
+    
+    elapsed_minutes = (now - last_check_dt).total_seconds() / 60
+    
+    if elapsed_minutes < 15:
+        wait_min = int(15 - elapsed_minutes)
+        logging.info(f"Skipping check. Last check was {int(elapsed_minutes)}m ago. Next check in ~{wait_min}m.")
+        return
+
+    logging.info(f"Starting intelligent scan (last check: {last_check_dt.strftime('%d.%m.%Y %H:%M')})...")
+    
     tracked_games = load_tracked_games()
     if not tracked_games:
         logging.info("Tracking list is empty. Check completed.")
         health.record_success()
         return
 
-    # Run parsing in a separate thread to avoid blocking Discord bot
-    # Checking only 1 page because CF blocks pagination, and new games are on the first page anyway.
-    games_on_page = await asyncio.to_thread(parser_instance.parse_games_on_page, pages_to_check=1)
-    
-    if not games_on_page:
-        logging.warning("Failed to get games from page. Skipping check.")
-        should_alert = health.record_failure()
-        if should_alert:
-            channel = bot.get_channel(CHANNEL_ID)
-            if channel:
-                await channel.send("⚠️ **CRITICAL ERROR**: PARSER IS DOWN! ⚠️\n3 consecutive attempts failed. Manual check required.")
-        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="PARSER ERROR"))
+    try:
+        # Run parsing in a separate thread to avoid blocking Discord bot
+        # Intelligent stop: scan up to 20 pages, but stop if we hit dates older than last_check_dt
+        games_on_page = await asyncio.to_thread(
+            parser_instance.parse_games_on_page, 
+            pages_to_check=20, 
+            stop_date=last_check_dt
+        )
+    except TimeoutException:
+        logging.warning("Cloudflare block detected during update check!")
+        channel = bot.get_channel(CHANNEL_ID)
+        if channel:
+            await channel.send("⚠️ **Cloudflare Block Detected**: The bot was prevented from scanning pages. Adding extra delay.")
+        health.record_failure()
+        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="CLOUDFLARE BLOCK"))
         return
+    except Exception as e:
+        logging.error(f"Unexpected error during update check: {e}")
+        health.record_failure()
+        return
+
+    if not games_on_page:
+        logging.warning("Failed to get games from page (empty result).")
+        # Record failure if it's consistently failing to get content
+        health.record_failure()
+        return
+
+    # Update last successful check time
+    settings["last_full_check"] = now.isoformat()
+    save_settings(settings)
 
     health.record_success()
     channel = bot.get_channel(CHANNEL_ID)
