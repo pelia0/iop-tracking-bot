@@ -83,13 +83,10 @@ class IOPUpdater:
             return
 
         updated_in_config = self._update_tracked_games(tracked_games, games_on_page, channel)
-        if updated_in_config:
-            save_tracked_games(tracked_games)
 
         deep_check_urls = self._find_deep_check_candidates(tracked_games, now)
         await self._perform_deep_checks(deep_check_urls, tracked_games, channel)
 
-        save_tracked_games(tracked_games)
         logging.info("🏁 Full scan cycle complete.")
         logging.info("====================================================")
 
@@ -134,6 +131,8 @@ class IOPUpdater:
                 tracked_game.date = current_date
                 tracked_game.image_url = current_info.get("image_url", "N/A")
                 updated = True
+                # Save immediately after finding an update
+                save_tracked_games(tracked_games)
 
         return updated
 
@@ -204,6 +203,8 @@ class IOPUpdater:
                     description="Backfill update found.",
                 )
                 logging.info(f"✨ Date changed during backfill for {tracked_game.title}!")
+                # Save immediately after finding an update
+                save_tracked_games(tracked_games)
 
             logging.info(f"✅ Game checked, recorded in JSON: {url}")
 
