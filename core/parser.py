@@ -12,6 +12,11 @@ from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
 MAX_RETRIES = 2
+IGNORED_URLS = {
+    "https://island-of-pleasure.site/40996-videourok-po-perevodu-igr-na-dvizhke-renpy-rpgm-i-unity-v261225-2025-rus.html",
+    "https://island-of-pleasure.site/15499-obschie-pravila-na-sayte.html",
+    "https://island-of-pleasure.site/37669-hochu-stat-perevodchikom.html"
+}
 
 class GameParser:
     _instance = None
@@ -146,6 +151,9 @@ class GameParser:
                         if not title_element: continue
 
                         game_url = title_element['href']
+                        if game_url in IGNORED_URLS:
+                            continue
+
                         game_title = title_element.get('title', title_element.text.strip())
                         
                         date_element = block.find('div', class_='update_date')
