@@ -89,19 +89,27 @@ class GameParser:
         logging.warning("Resetting WebDriver after error...")
         self.quit()
 
-    def parse_games_on_page(self, base_url='https://island-of-pleasure.site/games/', pages_to_check=20, stop_date=None):
+    def parse_games_on_page(self, pages_to_check=20, stop_date=None):
         """Synchronous blocking function for parsing several game pages.
         Retries are now handled per-page to avoid restarting from page 1 on failure.
         """
         all_games = {}
+        base_url = "https://island-of-pleasure.site/games/"
         import time
         import random
         from datetime import datetime
-        
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.common.by import By
+        from bs4 import BeautifulSoup
+
+        last_scanned_page = 0
         for page in range(1, pages_to_check + 1):
             page_url = base_url if page == 1 else f"{base_url}page/{page}/"
-            page_parsed_successfully = False
+            logging.info(f"--- Processing page {page} ---")
+            last_scanned_page = page
             
+            page_parsed_successfully = False
             for attempt in range(1, MAX_RETRIES + 1):
                 try:
                     driver = self.get_driver()
@@ -134,17 +142,18 @@ class GameParser:
                     wait = WebDriverWait(driver, 30)
                     wait.until(EC.presence_of_element_located((By.ID, "dle-content")))
                     
+                    # Manual delay for AJAX content stability
+                    time.sleep(2)
+                    
                     html = driver.page_source
                     soup = BeautifulSoup(html, 'html.parser')
                     
-                    content_div = soup.find('div', id='dle-content')
-                    if not content_div:
-                        logging.warning(f"Main block 'dle-content' not found on page {page}.")
-                        # Depending on structure, this might mean we should retry or skip
-                        page_parsed_successfully = True # Avoid infinite retries for empty pages
-                        break
-
-                    game_blocks = content_div.find_all('div', class_=lambda c: c and 'shortstory-in' in c and 'story_news' in c)
+                    content = soup.find(id='dle-content')
+                    if not content:
+                        raise ValueError("Element 'dle-content' not found on page.")
+                    
+                    game_blocks = content.find_all('div', class_='shortstory-in')
+                    logging.info(f"Found {len(game_blocks)} articles on page {page}.")
                     
                     for block in game_blocks:
                         title_element = block.find('h4', class_='short-link').find('a')
@@ -159,46 +168,54 @@ class GameParser:
                         date_element = block.find('div', class_='update_date')
                         game_date_str = date_element.text.strip() if date_element else "N/A"
                         
-                        # Early exit logic: if game date < stop_date, we found historical entries
+                        # Early exit logic
                         if stop_date and game_date_str != "N/A":
                             try:
                                 game_date = datetime.strptime(game_date_str, "%d.%m.%Y")
                                 if game_date.date() < stop_date.date():
                                     logging.info(f"Stopping scan: encountered an older date {game_date.strftime('%d.%m.%Y')} (last full check was on {stop_date.strftime('%d.%m.%Y')})")
-                                    return all_games
+                                    return all_games, last_scanned_page
                             except (ValueError, TypeError):
                                 pass
 
                         image_element = block.find('img')
-                        game_image_url = "N/A"
-                        if image_element:
-                            img_src = image_element['src']
-                            game_image_url = f'https://island-of-pleasure.site{img_src}' if img_src.startswith('/') else img_src
-
+                        image_url = image_element['src'] if image_element else "N/A"
+                        if image_url != "N/A" and not image_url.startswith('http'):
+                            image_url = "https://island-of-pleasure.site" + image_url
+                            
                         all_games[game_url] = {
-                            "title": game_title,
-                            "date": game_date_str,
-                            "image_url": game_image_url
+                            'title': game_title,
+                            'date': game_date_str,
+                            'image_url': image_url
                         }
                     
                     page_parsed_successfully = True
-                    break # Success on this page, break attempt loop
+                    break # Success on this page
+                    
                 except Exception as e:
                     logging.error(f"Error parsing page {page} (attempt {attempt}/{MAX_RETRIES}): {e}")
-                    self._reset_driver()
-                    if attempt == MAX_RETRIES:
-                        logging.error(f"Failed to parse page {page} after {MAX_RETRIES} attempts.")
-                        raise e
-                    logging.info("Retrying current page with new WebDriver...")
+                    if attempt < MAX_RETRIES:
+                        logging.warning("Resetting WebDriver after error...")
+                        self.quit()
+                        time.sleep(2)
+                        logging.info("Retrying current page with new WebDriver...")
+                    else:
+                        logging.error(f"Max retries reached for page {page}. Skipping.")
+                        return all_games, last_scanned_page
             
             if not page_parsed_successfully:
-                break # Should not happen due to raise e above, but for safety.
-
-        return all_games
+                break
+                
+        return all_games, last_scanned_page
 
     def parse_single_game_page(self, url: str):
         """Synchronous function for parsing a single game page (with retry)."""
+        import time
         import re
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        from selenium.webdriver.common.by import By
+        from bs4 import BeautifulSoup
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 driver = self.get_driver()

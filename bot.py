@@ -52,7 +52,8 @@ async def check_for_updates():
         logging.info(f"Skipping check. Last check was {int(elapsed_minutes)}m ago. Next check in ~{wait_min}m.")
         return
 
-    logging.info(f"Starting intelligent scan (last check: {last_check_dt.strftime('%d.%m.%Y %H:%M')})...")
+    logging.info("====================================================")
+    logging.info(f"🚀 Starting simple check (last full check: {last_check_dt.strftime('%d.%m.%Y %H:%M')})...")
     
     tracked_games = load_tracked_games()
     if not tracked_games:
@@ -60,47 +61,43 @@ async def check_for_updates():
         health.record_success()
         return
 
+    pages_processed = 0
     try:
         # 1. Main intelligent scan
-        games_on_page = await asyncio.to_thread(
+        games_on_page, pages_processed = await asyncio.to_thread(
             parser_instance.parse_games_on_page, 
             pages_to_check=20, 
             stop_date=last_check_dt
         )
         
-        # 2. Race-condition check: if we scanned multiple pages, re-check Page 1 at the end
-        # This catches updates that appeared while we were parsing deeper pages.
-        if games_on_page and len(games_on_page) > 10: # Rough indicator that we scanned > 1 page
-            logging.info("Re-checking Page 1 for race-condition updates...")
-            extra_games = await asyncio.to_thread(parser_instance.parse_games_on_page, pages_to_check=1)
+        # 2. Race-condition check: only if we went deeper than Page 1
+        if pages_processed > 1:
+            logging.info("--- Re-checking Page 1 for race-condition updates ---")
+            extra_games, _ = await asyncio.to_thread(parser_instance.parse_games_on_page, pages_to_check=1)
             if extra_games:
                 games_on_page.update(extra_games)
+        else:
+            logging.info("Scan stopped on Page 1, skipping re-scan.")
 
-    except TimeoutException:
-        logging.warning("Cloudflare block detected during update check!")
-        channel = bot.get_channel(CHANNEL_ID)
-        if channel:
-            await channel.send("⚠️ **Cloudflare Block Detected**: The bot was prevented from scanning pages. Adding extra delay.")
-        health.record_failure()
-        await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="CLOUDFLARE BLOCK"))
-        return
     except Exception as e:
-        logging.error(f"Unexpected error during update check: {e}")
+        logging.error(f"Error during update check: {e}")
         health.record_failure()
         return
 
     if not games_on_page:
         if last_check_dt.year > 1970:
-            logging.info("Everything is up to date! No new updates found since the last check.")
+            logging.info("✅ Simple check finished: Everything is up to date!")
         else:
-            logging.warning("Failed to get games from page (empty result).")
-        return
+            logging.warning("⚠️ Failed to get games from page (empty result).")
+        # Proceed to deep check anyway
+    else:
+        logging.info(f"✅ Simple check finished: Found {len(games_on_page)} actual games on processed pages.")
 
     # Update last successful check time
     settings["last_full_check"] = now.isoformat()
     save_settings(settings)
-
     health.record_success()
+
     channel = bot.get_channel(CHANNEL_ID)
     if not channel:
         logging.error(f"Failed to find channel with ID: {CHANNEL_ID}")
@@ -109,15 +106,17 @@ async def check_for_updates():
     updated_in_config = False
     for url, current_info in games_on_page.items():
         if url in tracked_games:
-            # Поддержка как старого формата дат (строка), так и нового (словарь)
-            game_data = tracked_games[url]
-            last_known_date = game_data if isinstance(game_data, str) else game_data.get("date", "N/A")
+            # Update last_scanned anyway because we just saw it in memory
+            if isinstance(tracked_games[url], dict):
+                tracked_games[url]["last_scanned"] = now.isoformat()
+            
+            last_known_date = tracked_games[url] if isinstance(tracked_games[url], str) else tracked_games[url].get("date", "N/A")
             current_date = current_info['date']
 
             if current_date != last_known_date:
-                logging.info(f"UPDATE! Game '{current_info['title']}' changed date from '{last_known_date}' to '{current_date}'")
+                logging.info(f"✨ UPDATE! Game '{current_info['title']}' changed date from '{last_known_date}' to '{current_date}'")
 
-                # Create buttons
+                # Create buttons and embed (same logic)
                 view = discord.ui.View()
                 btn = discord.ui.Button(label="Go to Game", url=url, style=discord.ButtonStyle.link)
                 view.add_item(btn)
@@ -125,7 +124,7 @@ async def check_for_updates():
                 embed = discord.Embed(
                     title=f"📅 Game Update: {current_info['title']}",
                     url=url,
-                    description="Update date has been found/changed!" if last_known_date == "N/A" else "Update date has been changed!",
+                    description="New date found!" if last_known_date == "N/A" else "Update date has been changed!",
                     color=discord.Color.gold()
                 )
                 embed.add_field(name="Old Date", value=f"`{last_known_date}`", inline=True)
@@ -137,7 +136,6 @@ async def check_for_updates():
                 if isinstance(tracked_games[url], dict):
                     tracked_games[url]["date"] = current_date
                     tracked_games[url]["image_url"] = current_info.get("image_url", "N/A")
-                    tracked_games[url]["last_scanned"] = now.isoformat()
                 else:
                     tracked_games[url] = {
                         "title": current_info['title'], 
@@ -145,24 +143,15 @@ async def check_for_updates():
                         "image_url": current_info.get("image_url", "N/A"),
                         "last_scanned": now.isoformat()
                     }
-                
                 updated_in_config = True
                 save_tracked_games(tracked_games)
-            else:
-                # Even if date didn't change, we update last_scanned because we saw it on front page
-                if isinstance(tracked_games[url], dict):
-                    tracked_games[url]["last_scanned"] = now.isoformat()
-                    updated_in_config = True
-                    # We don't save every single non-update to avoid too much IO, 
-                    # but it will be saved if at least one update or deep check happens.
                 
-    # Deep check (Backfill) for games: N/A only
+    # Deep check (Backfill) for games: N/A or > 7 days old
     games_to_deep_check = []
     now = datetime.now()
     
     for url, game_data in list(tracked_games.items()):
         if not isinstance(game_data, dict): continue
-        
         date_str = game_data.get("date", "N/A")
         last_scanned_str = game_data.get("last_scanned")
         
@@ -177,68 +166,57 @@ async def check_for_updates():
             except ValueError:
                 needs_check = True
         else:
-            # No last_scanned info, check it once
             needs_check = True
-            
+                
         if needs_check:
-            # Check if we have already done a deep check for this game in the last 24 hours
-            # (Double guard for the session)
             session_last = last_deep_check_time.get(url, None)
             if session_last is None or (now - session_last).total_seconds() > 24 * 3600:
                 games_to_deep_check.append(url)
-                if len(games_to_deep_check) >= 2: # Maximum 2 games per 1 cycle
+                if len(games_to_deep_check) >= 2:
                     break
                     
     import random
     for i, check_url in enumerate(games_to_deep_check):
-        delay_seconds = 300 if i > 0 else random.randint(30, 60)
-        logging.info(f"⏳ {delay_seconds} second delay before deep check (simulating human)...")
+        delay_seconds = random.randint(30, 60) if i == 0 else 300
+        logging.info(f"⏳ Waiting {delay_seconds}s before deep checking next game...")
         await asyncio.sleep(delay_seconds)
             
-        logging.info(f"🔍 Deep checking page: {check_url}")
+        logging.info(f"🔍 Starting deep check for game: {check_url}")
         
         single_info = await asyncio.to_thread(parser_instance.parse_single_game_page, check_url)
         last_deep_check_time[check_url] = datetime.now()
         
-        if single_info and single_info.get("date") not in ["N/A", None]:
-            old_date = tracked_games[check_url] if isinstance(tracked_games[check_url], str) else tracked_games[check_url].get("date", "N/A")
-            new_date = single_info["date"]
+        if single_info:
+            old_date = tracked_games[check_url].get("date", "N/A") if isinstance(tracked_games[check_url], dict) else "N/A"
+            new_date = single_info.get("date", "N/A")
             
-            if old_date != new_date:
-                # Відправляємо повідомлення в дискорд при глибокій перевірці
+            # Always update last_scanned and save
+            if isinstance(tracked_games[check_url], dict):
+                tracked_games[check_url]["last_scanned"] = datetime.now().isoformat()
+                if new_date != "N/A":
+                    tracked_games[check_url]["date"] = new_date
+                    tracked_games[check_url]["title"] = single_info["title"]
+            
+            if new_date != "N/A" and new_date != old_date:
+                # Send discord update if date changed during backfill
                 view = discord.ui.View()
                 btn = discord.ui.Button(label="Go to Game", url=check_url, style=discord.ButtonStyle.link)
                 view.add_item(btn)
-
                 embed = discord.Embed(
                     title=f"🔍 Backfill Update: {single_info['title']}",
                     url=check_url,
-                    description="Update date has been found via deep check!" if old_date == "N/A" else "Update date has been changed via deep check!",
                     color=discord.Color.purple()
                 )
                 embed.add_field(name="Old Date", value=f"`{old_date}`", inline=True)
                 embed.add_field(name="New Date", value=f"`{new_date}`", inline=True)
-                existing_image = tracked_games[check_url].get("image_url", "N/A") if isinstance(tracked_games[check_url], dict) else "N/A"
-                if existing_image != "N/A":
-                    embed.set_thumbnail(url=existing_image)
-                embed.set_footer(text=f"URL: {check_url}")
                 await channel.send(embed=embed, view=view)
+                logging.info(f"✨ Date changed during backfill for {single_info['title']}!")
 
-                if isinstance(tracked_games[check_url], dict):
-                    tracked_games[check_url]["date"] = new_date
-                    tracked_games[check_url]["title"] = single_info["title"]
-                    tracked_games[check_url]["last_scanned"] = datetime.now().isoformat()
-                else:
-                    tracked_games[check_url] = {
-                        "title": single_info["title"], 
-                        "date": new_date, 
-                        "image_url": "N/A",
-                        "last_scanned": datetime.now().isoformat()
-                    }
+            save_tracked_games(tracked_games)
+            logging.info(f"✅ Game checked, recorded in JSON: {check_url}")
 
-                updated_in_config = True
-                save_tracked_games(tracked_games)
-                logging.info(f"✅ Date updated after deep check for {single_info['title']}: {new_date}. Progress saved.")
+    logging.info("🏁 Full scan cycle complete.")
+    logging.info("====================================================")
 
     if updated_in_config:
         logging.info("Deep check loop complete. Tracking file is up-to-date.")
