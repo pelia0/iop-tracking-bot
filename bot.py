@@ -73,7 +73,7 @@ async def check_for_updates():
             last_known_date = game_data if isinstance(game_data, str) else game_data.get("date", "N/A")
             current_date = current_info['date']
 
-            if current_date != last_known_date and last_known_date != "N/A":
+            if current_date != last_known_date:
                 logging.info(f"UPDATE! Game '{current_info['title']}' changed date from '{last_known_date}' to '{current_date}'")
 
                 # Create buttons
@@ -84,7 +84,7 @@ async def check_for_updates():
                 embed = discord.Embed(
                     title=f"📅 Game Update: {current_info['title']}",
                     url=url,
-                    description="Update date has been changed!",
+                    description="Update date has been found/changed!" if last_known_date == "N/A" else "Update date has been changed!",
                     color=discord.Color.gold()
                 )
                 embed.add_field(name="Old Date", value=f"`{last_known_date}`", inline=True)
@@ -93,13 +93,6 @@ async def check_for_updates():
                 embed.set_footer(text=f"URL: {url}")
                 await channel.send(embed=embed, view=view)
 
-                if isinstance(tracked_games[url], dict):
-                    tracked_games[url]["date"] = current_date
-                else:
-                    tracked_games[url] = current_date
-                updated_in_config = True
-            elif current_date != last_known_date and last_known_date == "N/A":
-                # Quietly update if this is the first finding after N/A
                 if isinstance(tracked_games[url], dict):
                     tracked_games[url]["date"] = current_date
                     tracked_games[url]["image_url"] = current_info.get("image_url", "N/A")
@@ -148,13 +141,32 @@ async def check_for_updates():
             old_date = tracked_games[check_url] if isinstance(tracked_games[check_url], str) else tracked_games[check_url].get("date", "N/A")
             new_date = single_info["date"]
             
-            if isinstance(tracked_games[check_url], dict):
-                tracked_games[check_url]["date"] = new_date
-                tracked_games[check_url]["title"] = single_info["title"]
-            else:
-                tracked_games[check_url] = {"title": single_info["title"], "date": new_date, "image_url": "N/A"}
-                
             if old_date != new_date:
+                # Відправляємо повідомлення в дискорд при глибокій перевірці
+                view = discord.ui.View()
+                btn = discord.ui.Button(label="Go to Game", url=check_url, style=discord.ButtonStyle.link)
+                view.add_item(btn)
+
+                embed = discord.Embed(
+                    title=f"🔍 Backfill Update: {single_info['title']}",
+                    url=check_url,
+                    description="Update date has been found via deep check!" if old_date == "N/A" else "Update date has been changed via deep check!",
+                    color=discord.Color.purple()
+                )
+                embed.add_field(name="Old Date", value=f"`{old_date}`", inline=True)
+                embed.add_field(name="New Date", value=f"`{new_date}`", inline=True)
+                existing_image = tracked_games[check_url].get("image_url", "N/A") if isinstance(tracked_games[check_url], dict) else "N/A"
+                if existing_image != "N/A":
+                    embed.set_thumbnail(url=existing_image)
+                embed.set_footer(text=f"URL: {check_url}")
+                await channel.send(embed=embed, view=view)
+
+                if isinstance(tracked_games[check_url], dict):
+                    tracked_games[check_url]["date"] = new_date
+                    tracked_games[check_url]["title"] = single_info["title"]
+                else:
+                    tracked_games[check_url] = {"title": single_info["title"], "date": new_date, "image_url": "N/A"}
+
                 updated_in_config = True
                 save_tracked_games(tracked_games)
                 logging.info(f"✅ Date updated after deep check for {single_info['title']}: {new_date}. Progress saved.")
