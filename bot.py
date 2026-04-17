@@ -37,7 +37,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # --- 2. MAIN BOT TASK ---
 last_deep_check_time = {}
 
-@tasks.loop(minutes=15)
+@tasks.loop(hours=1)
 async def check_for_updates():
     settings = load_settings()
     last_check_str = settings.get("last_full_check", "1970-01-01T00:00:00")
@@ -46,6 +46,7 @@ async def check_for_updates():
     
     elapsed_minutes = (now - last_check_dt).total_seconds() / 60
     
+    # Check if we should skip (anti-spam)
     if elapsed_minutes < 15:
         wait_min = int(15 - elapsed_minutes)
         logging.info(f"Skipping check. Last check was {int(elapsed_minutes)}m ago. Next check in ~{wait_min}m.")
@@ -60,13 +61,21 @@ async def check_for_updates():
         return
 
     try:
-        # Run parsing in a separate thread to avoid blocking Discord bot
-        # Intelligent stop: scan up to 20 pages, but stop if we hit dates older than last_check_dt
+        # 1. Main intelligent scan
         games_on_page = await asyncio.to_thread(
             parser_instance.parse_games_on_page, 
             pages_to_check=20, 
             stop_date=last_check_dt
         )
+        
+        # 2. Race-condition check: if we scanned multiple pages, re-check Page 1 at the end
+        # This catches updates that appeared while we were parsing deeper pages.
+        if games_on_page and len(games_on_page) > 10: # Rough indicator that we scanned > 1 page
+            logging.info("Re-checking Page 1 for race-condition updates...")
+            extra_games = await asyncio.to_thread(parser_instance.parse_games_on_page, pages_to_check=1)
+            if extra_games:
+                games_on_page.update(extra_games)
+
     except TimeoutException:
         logging.warning("Cloudflare block detected during update check!")
         channel = bot.get_channel(CHANNEL_ID)

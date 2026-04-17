@@ -85,26 +85,28 @@ class GameParser:
         self.quit()
 
     def parse_games_on_page(self, base_url='https://island-of-pleasure.site/games/', pages_to_check=20, stop_date=None):
-        """Synchronous blocking function for parsing several game pages (with retry).
-        If stop_date (datetime) is provided, it stops parsing once it encounters an older game.
+        """Synchronous blocking function for parsing several game pages.
+        Retries are now handled per-page to avoid restarting from page 1 on failure.
         """
         all_games = {}
         import time
         import random
         from datetime import datetime
         
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                driver = self.get_driver()
-                
-                for page in range(1, pages_to_check + 1):
-                    page_url = base_url if page == 1 else f"{base_url}page/{page}/"
+        for page in range(1, pages_to_check + 1):
+            page_url = base_url if page == 1 else f"{base_url}page/{page}/"
+            page_parsed_successfully = False
+            
+            for attempt in range(1, MAX_RETRIES + 1):
+                try:
+                    driver = self.get_driver()
                     
                     if page > 1:
                         delay = random.uniform(3.0, 6.0)
-                        logging.info(f"Waiting {delay:.1f} sec before loading page {page} (anti-spam)...")
+                        logging.info(f"Waiting {delay:.1f} sec before loading page {page} (anti-spam, attempt {attempt})...")
                         time.sleep(delay)
-                        
+                    
+                    logging.info(f"Loading {page_url} (attempt {attempt}/{MAX_RETRIES})...")
                     driver.get(page_url)
                     
                     logging.info(f"Selenium waiting for content load (page {page})...")
@@ -117,7 +119,9 @@ class GameParser:
                     content_div = soup.find('div', id='dle-content')
                     if not content_div:
                         logging.warning(f"Main block 'dle-content' not found on page {page}.")
-                        continue
+                        # Depending on structure, this might mean we should retry or skip
+                        page_parsed_successfully = True # Avoid infinite retries for empty pages
+                        break
 
                     game_blocks = content_div.find_all('div', class_=lambda c: c and 'shortstory-in' in c and 'story_news' in c)
                     
@@ -152,13 +156,21 @@ class GameParser:
                             "date": game_date_str,
                             "image_url": game_image_url
                         }
-                return all_games
-            except Exception as e:
-                logging.error(f"Error parsing page {page if 'page' in locals() else 1} (attempt {attempt}/{MAX_RETRIES}): {e}")
-                self._reset_driver()
-                if attempt == MAX_RETRIES:
-                    raise e
-                logging.info("Retrying with new WebDriver...")
+                    
+                    page_parsed_successfully = True
+                    break # Success on this page, break attempt loop
+                except Exception as e:
+                    logging.error(f"Error parsing page {page} (attempt {attempt}/{MAX_RETRIES}): {e}")
+                    self._reset_driver()
+                    if attempt == MAX_RETRIES:
+                        logging.error(f"Failed to parse page {page} after {MAX_RETRIES} attempts.")
+                        raise e
+                    logging.info("Retrying current page with new WebDriver...")
+            
+            if not page_parsed_successfully:
+                break # Should not happen due to raise e above, but for safety.
+
+        return all_games
 
     def parse_single_game_page(self, url: str):
         """Synchronous function for parsing a single game page (with retry)."""
