@@ -46,43 +46,49 @@ async def check_for_updates():
     
     elapsed_minutes = (now - last_check_dt).total_seconds() / 60
     
-    # Check if we should skip (anti-spam)
-    if elapsed_minutes < 60:
-        wait_min = int(60 - elapsed_minutes)
-        logging.info(f"Skipping check. Last check was {int(elapsed_minutes)}m ago. Next check in ~{wait_min}m.")
-        return
-
-    logging.info("====================================================")
-    logging.info(f"🚀 Starting simple check (last full check: {last_check_dt.strftime('%d.%m.%Y %H:%M')})...")
-    
     tracked_games = load_tracked_games()
     if not tracked_games:
         logging.info("Tracking list is empty. Check completed.")
         health.record_success()
         return
 
+    games_on_page = {}
     pages_processed = 0
-    try:
-        # 1. Main intelligent scan
-        games_on_page, pages_processed = await asyncio.to_thread(
-            parser_instance.parse_games_on_page, 
-            pages_to_check=20, 
-            stop_date=last_check_dt
-        )
-        
-        # 2. Race-condition check: only if we went deeper than Page 1
-        if pages_processed > 1:
-            logging.info("--- Re-checking Page 1 for race-condition updates ---")
-            extra_games, _ = await asyncio.to_thread(parser_instance.parse_games_on_page, pages_to_check=1)
-            if extra_games:
-                games_on_page.update(extra_games)
-        else:
-            logging.info("Scan stopped on Page 1, skipping re-scan.")
+    should_skip_main = elapsed_minutes < 60
 
-    except Exception as e:
-        logging.error(f"Error during update check: {e}")
-        health.record_failure()
-        return
+    if should_skip_main:
+        wait_min = int(60 - elapsed_minutes)
+        logging.info(f"⏭️ Skipping simple check. Last check was {int(elapsed_minutes)}m ago (next in ~{wait_min}m).")
+        logging.info("🔍 Proceeding directly to verify games that need deep check...")
+    else:
+        logging.info("====================================================")
+        logging.info(f"🚀 Starting simple check (last full check: {last_check_dt.strftime('%d.%m.%Y %H:%M')})...")
+        
+        try:
+            # 1. Main intelligent scan
+            games_on_page, pages_processed = await asyncio.to_thread(
+                parser_instance.parse_games_on_page, 
+                pages_to_check=20, 
+                stop_date=last_check_dt
+            )
+            
+            # 2. Race-condition check: only if we went deeper than Page 1
+            if pages_processed > 1:
+                logging.info("--- Re-checking Page 1 for race-condition updates ---")
+                extra_games, _ = await asyncio.to_thread(parser_instance.parse_games_on_page, pages_to_check=1)
+                if extra_games:
+                    games_on_page.update(extra_games)
+            else:
+                logging.info("Scan stopped on Page 1, skipping re-scan.")
+
+            # Update last successful check time ONLY if we actually scanned
+            settings["last_full_check"] = now.isoformat()
+            save_settings(settings)
+            
+        except Exception as e:
+            logging.error(f"Error during update check: {e}")
+            health.record_failure()
+            # We don't return here, we still want to try deep check
 
     if not games_on_page:
         if last_check_dt.year > 1970:
