@@ -3,7 +3,6 @@ import asyncio
 import logging
 import random
 from datetime import datetime, timedelta
-from typing import Any
 
 import discord
 from discord.ext import commands
