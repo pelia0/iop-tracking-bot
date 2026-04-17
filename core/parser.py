@@ -8,6 +8,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
 MAX_RETRIES = 2
@@ -138,6 +139,13 @@ class GameParser:
                             "image_url": game_image_url
                         }
                 return all_games
+            except TimeoutException:
+                logging.warning(f"Cloudflare block or Timeout on page {page} (attempt {attempt}/{MAX_RETRIES}): Could not load 'dle-content'.")
+                self._reset_driver()
+                if attempt == MAX_RETRIES:
+                    logging.error("All parsing attempts exhausted due to Timeout/Cloudflare.")
+                    return {}
+                logging.info("Retrying with new WebDriver...")
             except Exception as e:
                 logging.error(f"Error parsing page (attempt {attempt}/{MAX_RETRIES}): {e}")
                 self._reset_driver()
@@ -166,8 +174,13 @@ class GameParser:
                 
                 logging.info(f"parse_single_game_page {url} -> title: {game_title}, date: {game_date}")
                 return {"title": game_title, "date": game_date, "image_url": "N/A"} # image_url just in case
+            except TimeoutException:
+                logging.warning(f"Cloudflare block or Timeout on single page {url} (attempt {attempt}/{MAX_RETRIES}): Element 'dle-content' not found (probably CAPTCHA).")
+                self._reset_driver()
+                if attempt == MAX_RETRIES:
+                    return None
             except Exception as e:
-                logging.error(f"Error parsing single page {url} (попытка {attempt}/{MAX_RETRIES}): {e}")
+                logging.error(f"Error parsing single page {url} (attempt {attempt}/{MAX_RETRIES}): {e}")
                 self._reset_driver()
                 if attempt == MAX_RETRIES:
                     return None
