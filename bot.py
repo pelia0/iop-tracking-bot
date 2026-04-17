@@ -178,12 +178,12 @@ async def check_for_updates():
             session_last = last_deep_check_time.get(url, None)
             if session_last is None or (now - session_last).total_seconds() > 24 * 3600:
                 games_to_deep_check.append(url)
-                if len(games_to_deep_check) >= 2:
+                if len(games_to_deep_check) >= 10: # Increased limit per cycle
                     break
                     
     import random
     for i, check_url in enumerate(games_to_deep_check):
-        delay_seconds = random.randint(30, 60) if i == 0 else 300
+        delay_seconds = random.randint(30, 60) if i == 0 else random.randint(60, 120)
         logging.info(f"⏳ Waiting {delay_seconds}s before deep checking next game...")
         await asyncio.sleep(delay_seconds)
             
