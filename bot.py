@@ -136,34 +136,56 @@ async def check_for_updates():
                 if isinstance(tracked_games[url], dict):
                     tracked_games[url]["date"] = current_date
                     tracked_games[url]["image_url"] = current_info.get("image_url", "N/A")
+                    tracked_games[url]["last_scanned"] = now.isoformat()
                 else:
-                    tracked_games[url] = {"title": current_info['title'], "date": current_date, "image_url": current_info.get("image_url", "N/A")}
-                updated_in_config = True
+                    tracked_games[url] = {
+                        "title": current_info['title'], 
+                        "date": current_date, 
+                        "image_url": current_info.get("image_url", "N/A"),
+                        "last_scanned": now.isoformat()
+                    }
                 
-    # Deep check (Backfill) for games: N/A, or older than 7 days
+                updated_in_config = True
+                save_tracked_games(tracked_games)
+            else:
+                # Even if date didn't change, we update last_scanned because we saw it on front page
+                if isinstance(tracked_games[url], dict):
+                    tracked_games[url]["last_scanned"] = now.isoformat()
+                    updated_in_config = True
+                    # We don't save every single non-update to avoid too much IO, 
+                    # but it will be saved if at least one update or deep check happens.
+                
+    # Deep check (Backfill) for games: N/A only
     games_to_deep_check = []
     now = datetime.now()
     
     for url, game_data in list(tracked_games.items()):
-        date_str = game_data if isinstance(game_data, str) else game_data.get("date", "N/A")
+        if not isinstance(game_data, dict): continue
+        
+        date_str = game_data.get("date", "N/A")
+        last_scanned_str = game_data.get("last_scanned")
         
         needs_check = False
         if date_str == "N/A":
             needs_check = True
-        else:
+        elif last_scanned_str:
             try:
-                game_date_obj = datetime.strptime(date_str, "%d.%m.%Y")
-                if (now - game_date_obj).days > 7:
+                last_scanned_dt = datetime.fromisoformat(last_scanned_str)
+                if (now - last_scanned_dt).days >= 7:
                     needs_check = True
             except ValueError:
                 needs_check = True
-                
+        else:
+            # No last_scanned info, check it once
+            needs_check = True
+            
         if needs_check:
             # Check if we have already done a deep check for this game in the last 24 hours
-            last_checked = last_deep_check_time.get(url, None)
-            if last_checked is None or (now - last_checked).total_seconds() > 24 * 3600:
+            # (Double guard for the session)
+            session_last = last_deep_check_time.get(url, None)
+            if session_last is None or (now - session_last).total_seconds() > 24 * 3600:
                 games_to_deep_check.append(url)
-                if len(games_to_deep_check) >= 2: # Maximum 2 games per 1 cycle (15 min)
+                if len(games_to_deep_check) >= 2: # Maximum 2 games per 1 cycle
                     break
                     
     import random
@@ -204,8 +226,14 @@ async def check_for_updates():
                 if isinstance(tracked_games[check_url], dict):
                     tracked_games[check_url]["date"] = new_date
                     tracked_games[check_url]["title"] = single_info["title"]
+                    tracked_games[check_url]["last_scanned"] = datetime.now().isoformat()
                 else:
-                    tracked_games[check_url] = {"title": single_info["title"], "date": new_date, "image_url": "N/A"}
+                    tracked_games[check_url] = {
+                        "title": single_info["title"], 
+                        "date": new_date, 
+                        "image_url": "N/A",
+                        "last_scanned": datetime.now().isoformat()
+                    }
 
                 updated_in_config = True
                 save_tracked_games(tracked_games)
@@ -256,18 +284,29 @@ async def track_game(interaction: discord.Interaction, url: str):
     game_info = games_on_page.get(normalized_url)
 
     if game_info:
-        tracked_games[normalized_url] = {"title": game_info['title'], "date": game_info['date'], "image_url": game_info['image_url']}
+        tracked_games[normalized_url] = {
+            "title": game_info['title'], 
+            "date": game_info['date'], 
+            "image_url": game_info['image_url'],
+            "last_scanned": datetime.now().isoformat()
+        }
         save_tracked_games(tracked_games)
         await interaction.channel.send(f"✅ Game `{game_info['title']}` added to tracking list with date `{game_info['date']}`.")
     else:
         # If not found on main page, try loading the generic page
         single_game_info = await asyncio.to_thread(parser_instance.parse_single_game_page, normalized_url)
         if single_game_info:
+            single_game_info["last_scanned"] = datetime.now().isoformat()
             tracked_games[normalized_url] = single_game_info
             save_tracked_games(tracked_games)
             await interaction.channel.send(f"✅ Game `{single_game_info['title']}` added. Exact date will be updated later.")
         else:
-            tracked_games[normalized_url] = {"title": "Unknown", "date": "N/A", "image_url": "N/A"}
+            tracked_games[normalized_url] = {
+                "title": "Unknown", 
+                "date": "N/A", 
+                "image_url": "N/A",
+                "last_scanned": datetime.now().isoformat()
+            }
             save_tracked_games(tracked_games)
             await interaction.channel.send(f"✅ URL added to list. Game not found on site, date will be updated when it appears.")
 
