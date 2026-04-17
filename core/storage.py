@@ -1,47 +1,75 @@
-import os
 import json
-import tempfile
-import shutil
 import logging
+import shutil
+import tempfile
+from pathlib import Path
+from typing import Any
 
-TRACKED_GAMES_FILE = "tracked_games.json"
+from core.models import TrackedGame
 
-def load_tracked_games():
-    try:
-        with open(TRACKED_GAMES_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+TRACKED_GAMES_FILE = Path("tracked_games.json")
+SETTINGS_FILE = Path("settings.json")
+
+
+def load_tracked_games() -> dict[str, TrackedGame]:
+    if not TRACKED_GAMES_FILE.exists():
         return {}
 
-def save_tracked_games(data):
-    if os.path.exists(TRACKED_GAMES_FILE):
-        try:
-            shutil.copy2(TRACKED_GAMES_FILE, TRACKED_GAMES_FILE + '.bak')
-        except Exception as e:
-            logging.error(f"Failed to create backup: {e}")
-            
-    tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(TRACKED_GAMES_FILE)) or '.', suffix='.json')
     try:
-        with os.fdopen(tmp_fd, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-        os.replace(tmp_path, TRACKED_GAMES_FILE)
-    except Exception as e:
-        os.unlink(tmp_path)
-        logging.error(f"Error saving json: {e}")
+        with TRACKED_GAMES_FILE.open('r', encoding='utf-8') as f:
+            raw_data = json.load(f)
+    except (json.JSONDecodeError, OSError) as error:
+        logging.error(f"Failed to load tracked games: {error}")
+        return {}
+
+    games: dict[str, TrackedGame] = {}
+    for url, value in (raw_data or {}).items():
+        try:
+            games[url] = TrackedGame.from_raw(value)
+        except TypeError:
+            logging.warning(f"Skipping invalid tracked game entry: {url}")
+    return games
+
+
+def save_tracked_games(data: dict[str, TrackedGame]) -> None:
+    if TRACKED_GAMES_FILE.exists():
+        try:
+            shutil.copy2(TRACKED_GAMES_FILE, TRACKED_GAMES_FILE.with_suffix('.json.bak'))
+        except Exception as error:
+            logging.error(f"Failed to create backup: {error}")
+
+    TRACKED_GAMES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(TRACKED_GAMES_FILE.parent), suffix='.json')
+    try:
+        with open(tmp_fd, 'w', encoding='utf-8') as f:
+            json.dump({url: game.to_dict() for url, game in data.items()}, f, indent=4, ensure_ascii=False)
+        Path(tmp_path).replace(TRACKED_GAMES_FILE)
+    except Exception as error:
+        Path(tmp_path).unlink(missing_ok=True)
+        logging.error(f"Error saving tracked games: {error}")
         raise
 
-SETTINGS_FILE = "settings.json"
 
-def load_settings():
-    try:
-        with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+def load_settings() -> dict[str, str]:
+    if not SETTINGS_FILE.exists():
         return {"last_full_check": "1970-01-01T00:00:00"}
 
-def save_settings(data):
     try:
-        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+        with SETTINGS_FILE.open('r', encoding='utf-8') as f:
+            data = json.load(f)
+            if isinstance(data, dict):
+                return data
+    except (json.JSONDecodeError, OSError) as error:
+        logging.error(f"Failed to load settings: {error}")
+
+    return {"last_full_check": "1970-01-01T00:00:00"}
+
+
+def save_settings(data: dict[str, str]) -> None:
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with SETTINGS_FILE.open('w', encoding='utf-8') as f:
             json.dump(data, f, indent=4)
-    except Exception as e:
-        logging.error(f"Error saving settings: {e}")
+    except Exception as error:
+        logging.error(f"Error saving settings: {error}")
+        raise

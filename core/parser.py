@@ -11,6 +11,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
+from core.utils import normalize_game_url
+
 MAX_RETRIES = 2
 IGNORED_URLS = {
     "https://island-of-pleasure.site/40996-videourok-po-perevodu-igr-na-dvizhke-renpy-rpgm-i-unity-v261225-2025-rus.html",
@@ -159,7 +161,8 @@ class GameParser:
                         title_element = block.find('h4', class_='short-link').find('a')
                         if not title_element: continue
 
-                        game_url = title_element['href']
+                        raw_game_url = title_element['href']
+                        game_url = normalize_game_url(raw_game_url)
                         if game_url in IGNORED_URLS:
                             continue
 
