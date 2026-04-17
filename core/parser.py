@@ -162,11 +162,11 @@ class GameParser:
                         # Early exit logic: if game date < stop_date, we found historical entries
                         if stop_date and game_date_str != "N/A":
                             try:
-                                game_dt = datetime.strptime(game_date_str, "%d.%m.%Y")
-                                if game_dt < stop_date:
-                                    logging.info(f"Stopping scan: encountered date {game_date_str} < stop_date {stop_date.strftime('%d.%m.%Y')}")
+                                game_date = datetime.strptime(game_date_str, "%d.%m.%Y")
+                                if game_date.date() < stop_date.date():
+                                    logging.info(f"Stopping scan: encountered an older date {game_date.strftime('%d.%m.%Y')} (last full check was on {stop_date.strftime('%d.%m.%Y')})")
                                     return all_games
-                            except ValueError:
+                            except (ValueError, TypeError):
                                 pass
 
                         image_element = block.find('img')

@@ -90,9 +90,10 @@ async def check_for_updates():
         return
 
     if not games_on_page:
-        logging.warning("Failed to get games from page (empty result).")
-        # Record failure if it's consistently failing to get content
-        health.record_failure()
+        if last_check_dt.year > 1970:
+            logging.info("Everything is up to date! No new updates found since the last check.")
+        else:
+            logging.warning("Failed to get games from page (empty result).")
         return
 
     # Update last successful check time
