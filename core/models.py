@@ -3,13 +3,13 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Any
 
-DATE_FORMAT = "%d.%m.%Y"
+from core.config import DATE_FORMAT, NO_DATE, NO_IMAGE, UNKNOWN_TITLE
 
 @dataclass
 class TrackedGame:
     title: str
-    date: str = "N/A"
-    image_url: str = "N/A"
+    date: str = NO_DATE
+    image_url: str = NO_IMAGE
     last_scanned: str = ""
 
     def to_dict(self) -> dict[str, str]:
@@ -21,13 +21,13 @@ class TrackedGame:
             return raw
 
         if isinstance(raw, str):
-            return cls(title="Unknown", date=raw if cls._looks_like_date(raw) else "N/A")
+            return cls(title=UNKNOWN_TITLE, date=raw if cls._looks_like_date(raw) else NO_DATE)
 
         if isinstance(raw, dict):
             return cls(
-                title=str(raw.get("title", "Unknown")) if raw.get("title") is not None else "Unknown",
-                date=str(raw.get("date", "N/A")) if raw.get("date") is not None else "N/A",
-                image_url=str(raw.get("image_url", "N/A")) if raw.get("image_url") is not None else "N/A",
+                title=str(raw.get("title", UNKNOWN_TITLE)) if raw.get("title") is not None else UNKNOWN_TITLE,
+                date=str(raw.get("date", NO_DATE)) if raw.get("date") is not None else NO_DATE,
+                image_url=str(raw.get("image_url", NO_IMAGE)) if raw.get("image_url") is not None else NO_IMAGE,
                 last_scanned=str(raw.get("last_scanned", "")) if raw.get("last_scanned") is not None else "",
             )
 

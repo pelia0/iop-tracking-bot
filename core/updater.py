@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import asyncio
 import logging
 import random
@@ -7,16 +8,20 @@ from datetime import datetime, timedelta
 import discord
 from discord.ext import commands
 
+from core.config import (
+    DEEP_CHECK_INTERVAL_HOURS,
+    DEEP_CHECK_LIMIT_PER_CYCLE,
+    MAX_PAGES_PER_SCAN,
+    MINUTES_BETWEEN_FULL_CHECK,
+    NO_DATE,
+    NO_IMAGE,
+)
 from core.health import health
 from core.models import TrackedGame
+from core.notifications import NotificationSender
 from core.parser import parser_instance
-from core.storage import load_settings, save_settings, load_tracked_games, save_tracked_games
-from core.utils import normalize_game_url
-
-MAX_PAGES_PER_SCAN = 20
-DEEP_CHECK_LIMIT_PER_CYCLE = 10
-DEEP_CHECK_INTERVAL_HOURS = 24
-MINUTES_BETWEEN_FULL_CHECK = 60
+from core.storage import async_load_settings, async_save_settings, async_load_tracked_games, async_save_tracked_games
+from core.utils import normalize_game_url, parse_isoformat_lenient
 
 
 class IOPUpdater:
@@ -24,9 +29,13 @@ class IOPUpdater:
         self.channel_id = channel_id
         self.last_deep_check_time: dict[str, datetime] = {}
 
-    async def check_for_updates(self, bot: commands.Bot) -> None:
-        settings = load_settings()
-        tracked_games = load_tracked_games()
+    # ------------------------------------------------------------------
+    # Public
+    # ------------------------------------------------------------------
+
+    async def check_for_updates(self, bot: commands.Bot, force: bool = False) -> None:
+        settings = await async_load_settings()
+        tracked_games = await async_load_tracked_games()
         if not tracked_games:
             logging.info("Tracking list is empty. Check completed.")
             health.record_success()
@@ -34,33 +43,34 @@ class IOPUpdater:
 
         now = datetime.now()
         last_check_str = settings.get("last_full_check", "1970-01-01T00:00:00")
-        last_check_dt = datetime.fromisoformat(last_check_str)
+        last_check_dt = parse_isoformat_lenient(last_check_str)
         elapsed_minutes = (now - last_check_dt).total_seconds() / 60
 
         games_on_page: dict[str, dict[str, str]] = {}
-        pages_processed = 0
-        should_scan_main = elapsed_minutes >= MINUTES_BETWEEN_FULL_CHECK
+        should_scan_main = force or (elapsed_minutes >= MINUTES_BETWEEN_FULL_CHECK)
 
         if should_scan_main:
-            logging.info("====================================================")
-            logging.info(f"🚀 Starting simple check (last full check: {last_check_dt.strftime('%d.%m.%Y %H:%M')})...")
+            if force:
+                logging.info("====================================================")
+                logging.info("🔥 FORCED check triggered manually via command!")
+            else:
+                logging.info("====================================================")
+                logging.info(f"🚀 Starting simple check (last full check: {last_check_dt.strftime('%d.%m.%Y %H:%M')})...")
             try:
-                games_on_page, pages_processed = await asyncio.to_thread(
-                    parser_instance.parse_games_on_page,
+                games_on_page, pages_processed = await parser_instance.async_parse_games_on_page(
                     pages_to_check=MAX_PAGES_PER_SCAN,
                     stop_date=last_check_dt,
                 )
 
                 if pages_processed > 1:
                     logging.info("--- Re-checking Page 1 for race-condition updates ---")
-                    extra_games, _ = await asyncio.to_thread(
-                        parser_instance.parse_games_on_page,
+                    extra_games, _ = await parser_instance.async_parse_games_on_page(
                         pages_to_check=1,
                     )
                     games_on_page.update(extra_games)
 
                 settings["last_full_check"] = now.isoformat()
-                save_settings(settings)
+                await async_save_settings(settings)
                 health.record_success()
             except Exception as error:
                 logging.error(f"Error during update check: {error}")
@@ -81,26 +91,34 @@ class IOPUpdater:
             logging.error(f"Failed to find channel with ID: {self.channel_id}")
             return
 
-        updated_in_config = self._update_tracked_games(tracked_games, games_on_page, channel)
-
+        await self._update_tracked_games(tracked_games, games_on_page, channel)
         deep_check_urls = self._find_deep_check_candidates(tracked_games, now)
         await self._perform_deep_checks(deep_check_urls, tracked_games, channel)
 
         logging.info("🏁 Full scan cycle complete.")
         logging.info("====================================================")
 
-        now_str = datetime.now().strftime("%H:%M")
-        await bot.change_presence(
-            activity=discord.Activity(type=discord.ActivityType.watching, name=f"{len(tracked_games)} games | upd. {now_str}"),
-        )
+        try:
+            now_str = datetime.now().strftime("%H:%M")
+            await bot.change_presence(
+                activity=discord.Activity(
+                    type=discord.ActivityType.watching,
+                    name=f"{len(tracked_games)} games | upd. {now_str}",
+                ),
+            )
+        except Exception as e:
+            logging.warning(f"Failed to update bot presence: {e}")
 
-    def _update_tracked_games(
+    # ------------------------------------------------------------------
+    # Private — tracked games update
+    # ------------------------------------------------------------------
+
+    async def _update_tracked_games(
         self,
         tracked_games: dict[str, TrackedGame],
         games_on_page: dict[str, dict[str, str]],
         channel: discord.TextChannel,
-    ) -> bool:
-        updated = False
+    ) -> None:
         now = datetime.now().isoformat()
 
         for raw_url, current_info in games_on_page.items():
@@ -110,30 +128,33 @@ class IOPUpdater:
 
             tracked_game = tracked_games[url]
             tracked_game.last_scanned = now
-            current_date = current_info.get("date", "N/A")
+            current_date = current_info.get("date", NO_DATE)
             last_known_date = tracked_game.date
 
-            if current_date != last_known_date:
-                logging.info(
-                    f"✨ UPDATE! Game '{current_info['title']}' changed date from '{last_known_date}' to '{current_date}'"
-                )
-                self._send_update_embed(
-                    channel=channel,
-                    title=current_info["title"],
-                    url=url,
-                    image_url=current_info.get("image_url", "N/A"),
-                    old_date=last_known_date,
-                    new_date=current_date,
-                    description=("New date found!" if last_known_date == "N/A" else "Update date has been changed!"),
-                )
-                tracked_game.title = current_info["title"]
-                tracked_game.date = current_date
-                tracked_game.image_url = current_info.get("image_url", "N/A")
-                updated = True
-                # Save immediately after finding an update
-                save_tracked_games(tracked_games)
+            if current_date == last_known_date:
+                continue
 
-        return updated
+            logging.info(
+                f"✨ UPDATE! Game '{current_info['title']}' changed date from '{last_known_date}' to '{current_date}'"
+            )
+            description = "New date found!" if last_known_date == NO_DATE else "Update date has been changed!"
+            await self._send_game_update(
+                channel=channel,
+                title=current_info["title"],
+                url=url,
+                image_url=current_info.get("image_url", NO_IMAGE),
+                old_date=last_known_date,
+                new_date=current_date,
+                description=description,
+            )
+            tracked_game.title = current_info["title"]
+            tracked_game.date = current_date
+            tracked_game.image_url = current_info.get("image_url", NO_IMAGE)
+            await async_save_tracked_games(tracked_games)
+
+    # ------------------------------------------------------------------
+    # Private — deep check scheduling
+    # ------------------------------------------------------------------
 
     def _find_deep_check_candidates(self, tracked_games: dict[str, TrackedGame], now: datetime) -> list[str]:
         candidates: list[str] = []
@@ -147,7 +168,7 @@ class IOPUpdater:
         return candidates
 
     def _needs_deep_check(self, game: TrackedGame, now: datetime) -> bool:
-        if game.date == "N/A":
+        if game.date == NO_DATE:
             return True
 
         if not game.last_scanned:
@@ -172,43 +193,51 @@ class IOPUpdater:
 
             url = normalize_game_url(raw_url)
             logging.info(f"🔍 Starting deep check for game: {url}")
-            single_info = await asyncio.to_thread(parser_instance.parse_single_game_page, url)
-            self.last_deep_check_time[url] = datetime.now()
+            try:
+                single_info = await parser_instance.async_parse_single_game_page(url)
+                if not single_info:
+                    logging.warning(f"Deep check returned empty info for {url}")
+                    continue
 
-            if not single_info:
-                logging.warning(f"Deep check failed for {url}")
-                continue
+                self.last_deep_check_time[url] = datetime.now()
+                tracked_game = tracked_games.get(url)
+                if not tracked_game:
+                    tracked_game = TrackedGame.from_raw(single_info)
+                    tracked_games[url] = tracked_game
 
-            tracked_game = tracked_games.get(url)
-            if not tracked_game:
-                tracked_game = TrackedGame.from_raw(single_info)
-                tracked_games[url] = tracked_game
+                old_date = tracked_game.date
+                new_date = single_info.get("date", NO_DATE)
+                tracked_game.last_scanned = datetime.now().isoformat()
+                tracked_game.title = single_info.get("title", tracked_game.title)
 
-            old_date = tracked_game.date
-            new_date = single_info.get("date", "N/A")
-            tracked_game.last_scanned = datetime.now().isoformat()
-            tracked_game.title = single_info.get("title", tracked_game.title)
-            if new_date != "N/A":
-                tracked_game.date = new_date
+                if new_date != NO_DATE:
+                    tracked_game.date = new_date
 
-            if new_date != "N/A" and new_date != old_date:
-                self._send_update_embed(
-                    channel=channel,
-                    title=tracked_game.title,
-                    url=url,
-                    image_url=tracked_game.image_url,
-                    old_date=old_date,
-                    new_date=new_date,
-                    description="Backfill update found.",
-                )
-                logging.info(f"✨ Date changed during backfill for {tracked_game.title}!")
-                # Save immediately after finding an update
-                save_tracked_games(tracked_games)
+                if new_date != NO_DATE and new_date != old_date:
+                    await self._send_game_update(
+                        channel=channel,
+                        title=tracked_game.title,
+                        url=url,
+                        image_url=tracked_game.image_url,
+                        old_date=old_date,
+                        new_date=new_date,
+                        description="Backfill update found.",
+                    )
+                    logging.info(f"✨ Date changed during backfill for {tracked_game.title}!")
 
-            logging.info(f"✅ Game checked, recorded in JSON: {url}")
+                # Always save after deep check to persist last_scanned/title updates
+                await async_save_tracked_games(tracked_games)
 
-    def _send_update_embed(
-        self,
+                logging.info(f"✅ Game checked, recorded in JSON: {url}")
+            except Exception as e:
+                logging.error(f"Deep check failed for {url}: {e}")
+
+    # ------------------------------------------------------------------
+    # Private — notification helper (DRY)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _send_game_update(
         channel: discord.TextChannel,
         title: str,
         url: str,
@@ -217,19 +246,13 @@ class IOPUpdater:
         new_date: str,
         description: str,
     ) -> None:
-        embed = discord.Embed(
-            title=f"📅 Game Update: {title}",
+        """Wrapper around NotificationSender — centralises the call."""
+        await NotificationSender.send_update_notification(
+            channel=channel,
+            title=title,
             url=url,
+            image_url=image_url,
+            old_date=old_date,
+            new_date=new_date,
             description=description,
-            color=discord.Color.gold(),
         )
-        embed.add_field(name="Old Date", value=f"`{old_date}`", inline=True)
-        embed.add_field(name="New Date", value=f"`{new_date}`", inline=True)
-        if image_url != "N/A":
-            embed.set_thumbnail(url=image_url)
-        embed.set_footer(text=f"URL: {url}")
-
-        button = discord.ui.Button(label="Go to Game", url=url, style=discord.ButtonStyle.link)
-        view = discord.ui.View()
-        view.add_item(button)
-        asyncio.create_task(channel.send(embed=embed, view=view))

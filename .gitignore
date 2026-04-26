@@ -1,9 +1,12 @@
 .env
 __pycache__/
 *.pyc
+*.lnk
 .venv/
 venv/
 env/
+.mypy_cache/
+.pytest_cache/
 bot_log.txt
 bot.log
 bot.log.*

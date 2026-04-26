@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import shutil
@@ -9,6 +10,10 @@ from core.models import TrackedGame
 
 TRACKED_GAMES_FILE = Path("tracked_games.json")
 SETTINGS_FILE = Path("settings.json")
+
+storage_lock = asyncio.Lock()
+_games_lock = asyncio.Lock()
+_settings_lock = asyncio.Lock()
 
 
 def load_tracked_games() -> dict[str, TrackedGame]:
@@ -73,3 +78,20 @@ def save_settings(data: dict[str, str]) -> None:
     except Exception as error:
         logging.error(f"Error saving settings: {error}")
         raise
+
+
+async def async_load_tracked_games() -> dict[str, TrackedGame]:
+    async with _games_lock:
+        return await asyncio.to_thread(load_tracked_games)
+
+async def async_save_tracked_games(data: dict[str, TrackedGame]) -> None:
+    async with _games_lock:
+        await asyncio.to_thread(save_tracked_games, data)
+
+async def async_load_settings() -> dict[str, str]:
+    async with _settings_lock:
+        return await asyncio.to_thread(load_settings)
+
+async def async_save_settings(data: dict[str, str]) -> None:
+    async with _settings_lock:
+        await asyncio.to_thread(save_settings, data)
